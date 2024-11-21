@@ -1,13 +1,13 @@
-import yfinance as yf
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.model_selection import cross_val_score, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 from sklearn.svm import SVC
-import pickle
 from statsmodels.api import OLS
-
+from utils import split_train_test_sequential
+import yfinance as yf
+import pickle
+import numpy as np
+import pandas as pd
 
 def compute_revert_in_7_days(z_score_series):
     """
@@ -22,12 +22,10 @@ def compute_revert_in_7_days(z_score_series):
     return (
         z_score_series.rolling(window=14, center=False)
         .apply(lambda x: any(abs(x) <= 0.1), raw=True)
-        .shift(-6)
+        .shift(-13)
         .fillna(0)
         .astype(int)
     )
-
-
 
 start_date = "2019-01-01"
 end_date = "2023-01-01"
@@ -81,8 +79,11 @@ y = data['Target']
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
+with open('scaler.pkl', 'wb') as f:
+    pickle.dump(scaler, f)
+
 # Split data into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = split_train_test_sequential(X_scaled, y)
 
 # Use GridSearchCV to tune hyperparameters for better performance
 param_grid = {
@@ -104,9 +105,10 @@ print(f"Cross-Validation Accuracy: {cv_scores.mean():.2f} (+/- {cv_scores.std():
 
 # Make predictions and evaluate on the test set
 y_pred = best_xg_model.predict(X_test)
+
 accuracy = accuracy_score(y_test, y_pred)
 print(f"Test Accuracy: {accuracy:.2f}")
 
 # save
-with open('model.pkl','wb') as f:
+with open('model2.pkl','wb') as f:
     pickle.dump(best_xg_model,f)
