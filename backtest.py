@@ -117,10 +117,17 @@ class BacktestParisTrading:
 
         # Recall, we are trading the "synthetic pair" asset_1/asset_2 and betting on its mean reversion
 
+        # Entry Logic
         backtest_df.loc[(backtest_df.zscore >= 1) & (backtest_df.pred == 1), ('positions_asset_1_Short', 'positions_asset_2_Short')] = [-1, 1] # Short spread
         backtest_df.loc[(backtest_df.zscore <= -1) & (backtest_df.pred == 1), ('positions_asset_1_Long', 'positions_asset_2_Long')] = [1, -1] # Buy spread
+
+        # TP Logic
         backtest_df.loc[(backtest_df.zscore <= 0), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
         backtest_df.loc[(backtest_df.zscore >= 0), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
+
+        # SL Logic
+        backtest_df.loc[(backtest_df.zscore >= 2), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
+        backtest_df.loc[(backtest_df.zscore <= -2), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
 
         backtest_df.fillna(method='ffill', inplace=True) # ensure existing positions are carried forward unless there is an exit signal
 
@@ -133,8 +140,6 @@ class BacktestParisTrading:
         pnl = (positions.shift() * dailyret).sum(axis=1)
 
         self.__calculate_metrics(pnl)
-        
-        return pnl[1:].sum()*100
 
 
 
