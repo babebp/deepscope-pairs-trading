@@ -54,8 +54,8 @@ class PairsTradingML:
 
         # Prepare the data
         data = pd.DataFrame({
-            'asset_1': asset_1['Adj Close']['GC=F'],
-            'asset_2': asset_2['Adj Close']['SI=F']
+            'asset_1': asset_1['Adj Close'][self.pairs[0]],
+            'asset_2': asset_2['Adj Close'][self.pairs[1]]
         }).dropna()
 
         return data
