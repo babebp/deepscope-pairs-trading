@@ -10,6 +10,9 @@ import matplotlib.pyplot as plt
 ROLLING_WINDOW = 21
 THRESHOLD = 1.5
 WINDOW = 30
+TP_THRESHOLD = 0
+ENTRY_TRESHOLD = 2
+SL_TRESHOLD = 10
 
 class BacktestParisTrading:
 
@@ -119,16 +122,16 @@ class BacktestParisTrading:
         # Recall, we are trading the "synthetic pair" asset_1/asset_2 and betting on its mean reversion
 
         # Entry Logic
-        backtest_df.loc[(backtest_df.zscore >= 1) & (backtest_df.pred == 1), ('positions_asset_1_Short', 'positions_asset_2_Short')] = [-1, 1] # Short spread
-        backtest_df.loc[(backtest_df.zscore <= -1) & (backtest_df.pred == 1), ('positions_asset_1_Long', 'positions_asset_2_Long')] = [1, -1] # Buy spread
+        backtest_df.loc[(backtest_df.zscore >= ENTRY_TRESHOLD) & (backtest_df.pred == 1), ('positions_asset_1_Short', 'positions_asset_2_Short')] = [-1, 1] # Short spread
+        backtest_df.loc[(backtest_df.zscore <= -ENTRY_TRESHOLD) & (backtest_df.pred == 1), ('positions_asset_1_Long', 'positions_asset_2_Long')] = [1, -1] # Buy spread
 
         # TP Logic
-        backtest_df.loc[(backtest_df.zscore <= 0), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
-        backtest_df.loc[(backtest_df.zscore >= 0), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
+        backtest_df.loc[(backtest_df.zscore <= TP_THRESHOLD), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
+        backtest_df.loc[(backtest_df.zscore >= TP_THRESHOLD), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
 
         # SL Logic
-        backtest_df.loc[(backtest_df.zscore >= 2), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
-        backtest_df.loc[(backtest_df.zscore <= -2), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
+        backtest_df.loc[(backtest_df.zscore >= SL_TRESHOLD), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
+        backtest_df.loc[(backtest_df.zscore <= -SL_TRESHOLD), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
 
         backtest_df.fillna(method='ffill', inplace=True) # ensure existing positions are carried forward unless there is an exit signal
 
@@ -140,18 +143,27 @@ class BacktestParisTrading:
         dailyret = backtest_df[['asset_1', 'asset_2']].pct_change() 
         pnl = (positions.shift() * dailyret).sum(axis=1)
 
-        self.__calculate_metrics(pnl)
-        self.show_result(pnl)
 
         result_df = backtest_df.copy()
         result_df[['asset_1_position', 'asset_2_position']] = np.array(result_df[['positions_asset_1_Long', 'positions_asset_2_Long']]) + np.array(result_df[['positions_asset_1_Short', 'positions_asset_2_Short']])
         result_df[['asset_1_change', 'asset_2_change']] = result_df[['asset_1', 'asset_2']].pct_change() 
-        result_df['pnl'] = ( np.array(result_df[['asset_1_position', 'asset_2_position']].shift(1)) * np.array(result_df[['asset_1_change', 'asset_2_change']])).sum(axis=1)
+
+        # result_df['pnl'] = ( np.array(result_df[['asset_1_position', 'asset_2_position']].shift(1)) * np.array(result_df[['asset_1_change', 'asset_2_change']])).sum(axis=1)
+        # result_df['cumulative_pnl'] = result_df['pnl'].cumsum()
+        result_df['pnl'] = pnl
         result_df['cumulative_pnl'] = result_df['pnl'].cumsum()
+
+        # result_df['active_trade'] = np.where(result_df['asset_1_position'] != 0, True, False)
+        # result_df['active_trade'] = result_df['active_trade'].shift(1)
+        # result_df['fee'] = np.where(result_df['active_trade'] & (result_df['asset_1_position'] == 0), result.)
+        # result_df['total_pnl'] = np.where(result_df['active_trade'] & (result_df['asset_1_position'] == 0), result_df['cumulative_pnl'], 0)
+        # result_df['total_pnl'] = result_df['total_pnl'].replace(0, method='ffill')
+        # result_df['actual_pnl'] = result_df['total_pnl'].diff()
         result_df.drop(columns=['positions_asset_1_Long', 'positions_asset_2_Long', 'positions_asset_1_Short', 'positions_asset_2_Short'], inplace=True)
         result_df.to_csv("backtest_result.csv")
 
-        # self.plot_spread_analysis()
+        self.__calculate_metrics(result_df['pnl'])
+        self.plot_spread_analysis(result_df['asset_1'], result_df['asset_2'], result_df['asset_1'] - self.hedge_ratio * result_df['asset_2'], result_df['zscore'], self.hedge_ratio, result_df['cumulative_pnl'])
 
 
 
@@ -202,7 +214,7 @@ class BacktestParisTrading:
         return data
 
 
-    def plot_spread_analysis(self, series_1, series_2, spread, z_score, half_life, hedge_ratio):
+    def plot_spread_analysis(self, series_1, series_2, spread, z_score, hedge_ratio, cum_sum):
         """
         Plots base_pairs, quote_pairs, spread, z-score, and annotates half-life.
 
@@ -212,26 +224,26 @@ class BacktestParisTrading:
         """
         fig, axs = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-        # Plot base_pairs, quote_pairs, and spread
-        axs[0].plot(spread, label='Spread', color='green')
-        axs[0].set_title('Spread')
+        axs[0].plot(series_1, label=f'Gold', color='orange')
+        axs[0].plot(series_2 * hedge_ratio, label='Silver', color='gray')
+        axs[0].set_title('Close Price')
         axs[0].legend()
-
-        # Annotate half-life
-        axs[0].annotate(f'Half-Life: {half_life:.2f}', xy=(0.05, 0.85), xycoords='axes fraction', fontsize=10, color='red')
 
         # Plot z-score
         axs[1].plot(z_score, label='Z-Score', color='purple')
         axs[1].set_title('Z-Score')
-        axs[1].axhline(0, color='black', linestyle='--', linewidth=1)
-        axs[1].axhline(2, color='red', linestyle='--', linewidth=1)
-        axs[1].axhline(-2, color='red', linestyle='--', linewidth=1)
+        axs[1].axhline(TP_THRESHOLD, color='green', linestyle='--', linewidth=1)
+        axs[1].axhline(ENTRY_TRESHOLD, color='black', linestyle='-', linewidth=1)
+        axs[1].axhline(-ENTRY_TRESHOLD, color='black', linestyle='-', linewidth=1)
+        axs[1].axhline(SL_TRESHOLD, color='red', linestyle='--', linewidth=1)
+        axs[1].axhline(-SL_TRESHOLD, color='red', linestyle='--', linewidth=1)
         axs[1].legend()
-
-        axs[2].plot(series_1['close'], label=f'Base Pairs ({series_1.columns})', color='blue')
-        axs[2].plot(series_2['close'] * hedge_ratio, label='Quote Pairs', color='orange')
-        axs[2].set_title('Close Price')
+        
+        axs[2].plot(cum_sum, label="cumulative pnl", color='green')
+        axs[2].set_title('Cummulative PNL')
+        axs[2].axhline(0, color='black', linestyle='--', linewidth=1)
         axs[2].legend()
+
 
         # Final adjustments
         plt.xlabel('Time')
