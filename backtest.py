@@ -5,6 +5,7 @@ from statsmodels.api import OLS
 import numpy as np
 from tabulate import tabulate
 import pickle
+import matplotlib.pyplot as plt
 
 ROLLING_WINDOW = 21
 THRESHOLD = 1.5
@@ -32,7 +33,7 @@ class BacktestParisTrading:
 
 
     def __calculate_hedge_ratio(self):
-        data = self.__get_historical_data("2022-01-01", "2023-01-01")
+        data = self.__get_historical_data("2018-01-01", "2019-01-01")
 
         # Step 3: Calculate the Spread
         model = OLS(data['asset_1'], data['asset_2']).fit()
@@ -93,8 +94,8 @@ class BacktestParisTrading:
         data['Prediction'] = model.predict(X_new_scaled)
 
         
-    def backtest(self, model_path: str, scaler_path: str):
-        data = self.__get_historical_data("2023-01-01", "2024-01-01")
+    def backtest(self, model_path: str, scaler_path: str, start_date: str = "2023-01-01", end_date: str = "2024-01-01"):
+        data = self.__get_historical_data(start_date, end_date)
 
         self.__calculate_spread(data)
         self.__calculate_z_score(data)
@@ -106,7 +107,7 @@ class BacktestParisTrading:
             "asset_1": data['asset_1'],
             "asset_2": data['asset_2'],
             "zscore": data['Z-Score'],
-            "pred": data['Prediction']
+            "pred": data['Prediction'],
             })
 
         backtest_df['positions_asset_1_Long'] = 0
@@ -140,10 +141,22 @@ class BacktestParisTrading:
         pnl = (positions.shift() * dailyret).sum(axis=1)
 
         self.__calculate_metrics(pnl)
+        self.show_result(pnl)
+
+        result_df = backtest_df.copy()
+        result_df[['asset_1_position', 'asset_2_position']] = np.array(result_df[['positions_asset_1_Long', 'positions_asset_2_Long']]) + np.array(result_df[['positions_asset_1_Short', 'positions_asset_2_Short']])
+        result_df[['asset_1_change', 'asset_2_change']] = result_df[['asset_1', 'asset_2']].pct_change() 
+        result_df['pnl'] = ( np.array(result_df[['asset_1_position', 'asset_2_position']].shift(1)) * np.array(result_df[['asset_1_change', 'asset_2_change']])).sum(axis=1)
+        result_df['cumulative_pnl'] = result_df['pnl'].cumsum()
+        result_df.drop(columns=['positions_asset_1_Long', 'positions_asset_2_Long', 'positions_asset_1_Short', 'positions_asset_2_Short'], inplace=True)
+        result_df.to_csv("backtest_result.csv")
+
+        # self.plot_spread_analysis()
 
 
 
-    def __calculate_metrics(self, pnl):
+
+    def __calculate_metrics(self, pnl: pd.Series):
 
         # Calculate cumulative returns
         cumulative_returns = (1 + pnl).cumprod()
@@ -157,24 +170,25 @@ class BacktestParisTrading:
         CAGR = ((end_value / start_value) ** (1 / num_years)) - 1
 
         # Maximum Drawdown
-        drawdown = cumulative_returns / cumulative_returns.cummax() - 1
-        max_drawdown = drawdown.min()
+        cum_pnl = pnl.cumsum()
+        max_cum_pnl = cum_pnl.cummax()
+        drawdown = max_cum_pnl - cum_pnl
 
         # Standard Deviation
-        std_dev = pnl.std()
+        std_dev = pnl.std() * np.sqrt(250)
 
         # Create a metrics table
         metrics = [
             ["CAGR", f"{CAGR:.2%}"],
-            ["Max Drawdown", f"{max_drawdown:.2%}"],
+            ["Max Drawdown", f"{drawdown.max():.2%}"],
             ["Standard Deviation", f"{std_dev:.2%}"]
         ]
 
         # Print with tabulate
         print(tabulate(metrics, headers=["Metric", "Value"], tablefmt="grid"))
+        return CAGR, drawdown.max(), std_dev, pnl
 
 
-        
     def __get_historical_data(self, start, end):
         asset_1 = yf.download(self.pairs[0], start=start, end=end)
         asset_2 = yf.download(self.pairs[1], start=start, end=end)
@@ -187,3 +201,39 @@ class BacktestParisTrading:
 
         return data
 
+
+    def plot_spread_analysis(self, series_1, series_2, spread, z_score, half_life, hedge_ratio):
+        """
+        Plots base_pairs, quote_pairs, spread, z-score, and annotates half-life.
+
+        Parameters:
+        df (DataFrame): Data containing 'base_pairs', 'quote_pairs', 'spread', and 'z_score'.
+        half_life (float): Calculated half-life of the spread.
+        """
+        fig, axs = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+
+        # Plot base_pairs, quote_pairs, and spread
+        axs[0].plot(spread, label='Spread', color='green')
+        axs[0].set_title('Spread')
+        axs[0].legend()
+
+        # Annotate half-life
+        axs[0].annotate(f'Half-Life: {half_life:.2f}', xy=(0.05, 0.85), xycoords='axes fraction', fontsize=10, color='red')
+
+        # Plot z-score
+        axs[1].plot(z_score, label='Z-Score', color='purple')
+        axs[1].set_title('Z-Score')
+        axs[1].axhline(0, color='black', linestyle='--', linewidth=1)
+        axs[1].axhline(2, color='red', linestyle='--', linewidth=1)
+        axs[1].axhline(-2, color='red', linestyle='--', linewidth=1)
+        axs[1].legend()
+
+        axs[2].plot(series_1['close'], label=f'Base Pairs ({series_1.columns})', color='blue')
+        axs[2].plot(series_2['close'] * hedge_ratio, label='Quote Pairs', color='orange')
+        axs[2].set_title('Close Price')
+        axs[2].legend()
+
+        # Final adjustments
+        plt.xlabel('Time')
+        plt.tight_layout()
+        plt.show()
