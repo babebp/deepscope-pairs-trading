@@ -11,14 +11,16 @@ ROLLING_WINDOW = 21
 THRESHOLD = 1.5
 WINDOW = 30
 TP_THRESHOLD = 0
-ENTRY_TRESHOLD = 2
-SL_TRESHOLD = 10
+ENTRY_TRESHOLD = 1
+SL_TRESHOLD = 2
 
 class BacktestParisTrading:
 
     def __init__(self, pairs=["GC=F", "SI=F"]):
         self.nav = 10000
         self.fee = 0.001 # 0.1 %
+        self.risk_per_trade = 2000
+        self.risk_per_asset = self.risk_per_trade / 2
         self.pairs = pairs
         self.hedge_ratio = self.__calculate_hedge_ratio()
 
@@ -133,38 +135,43 @@ class BacktestParisTrading:
         backtest_df.loc[(backtest_df.zscore >= SL_TRESHOLD), ('positions_asset_1_Short', 'positions_asset_2_Short')] = 0 # Exit short spread
         backtest_df.loc[(backtest_df.zscore <= -SL_TRESHOLD), ('positions_asset_1_Long', 'positions_asset_2_Long')] = 0 # Exit long spread
 
-        backtest_df.fillna(method='ffill', inplace=True) # ensure existing positions are carried forward unless there is an exit signal
+        backtest_df.ffill(inplace=True) # ensure existing positions are carried forward unless there is an exit signal
 
-        positions_Long = backtest_df[['positions_asset_1_Long', 'positions_asset_2_Long']]
-        positions_Short = backtest_df[['positions_asset_1_Short', 'positions_asset_2_Short']]
-        positions = np.array(positions_Long) + np.array(positions_Short)
-        positions = pd.DataFrame(positions, index=positions_Long.index, columns=['asset_1','asset_2'])
 
-        dailyret = backtest_df[['asset_1', 'asset_2']].pct_change() 
-        pnl = (positions.shift() * dailyret).sum(axis=1)
-
+        """Calculate PNL
+        """
 
         result_df = backtest_df.copy()
+
         result_df[['asset_1_position', 'asset_2_position']] = np.array(result_df[['positions_asset_1_Long', 'positions_asset_2_Long']]) + np.array(result_df[['positions_asset_1_Short', 'positions_asset_2_Short']])
-        result_df[['asset_1_change', 'asset_2_change']] = result_df[['asset_1', 'asset_2']].pct_change() 
 
-        # result_df['pnl'] = ( np.array(result_df[['asset_1_position', 'asset_2_position']].shift(1)) * np.array(result_df[['asset_1_change', 'asset_2_change']])).sum(axis=1)
-        # result_df['cumulative_pnl'] = result_df['pnl'].cumsum()
-        result_df['pnl'] = pnl
-        result_df['cumulative_pnl'] = result_df['pnl'].cumsum()
+        result_df['active_trade'] = np.where(result_df['asset_1_position'] != 0, 1, 0)
+        result_df['asset_1_position_size'] = np.where((result_df['active_trade'].shift() == 0) & (result_df['asset_1_position'] != 0), self.risk_per_asset / result_df['asset_1'], np.nan)
+        result_df['asset_2_position_size'] = np.where((result_df['active_trade'].shift() == 0) & (result_df['asset_1_position'] != 0), self.risk_per_asset / result_df['asset_2'], np.nan)
 
-        # result_df['active_trade'] = np.where(result_df['asset_1_position'] != 0, True, False)
-        # result_df['active_trade'] = result_df['active_trade'].shift(1)
-        # result_df['fee'] = np.where(result_df['active_trade'] & (result_df['asset_1_position'] == 0), result.)
-        # result_df['total_pnl'] = np.where(result_df['active_trade'] & (result_df['asset_1_position'] == 0), result_df['cumulative_pnl'], 0)
-        # result_df['total_pnl'] = result_df['total_pnl'].replace(0, method='ffill')
-        # result_df['actual_pnl'] = result_df['total_pnl'].diff()
-        result_df.drop(columns=['positions_asset_1_Long', 'positions_asset_2_Long', 'positions_asset_1_Short', 'positions_asset_2_Short'], inplace=True)
+        result_df.ffill(inplace=True)
+        result_df.loc[result_df['asset_1_position'] == 0, ["asset_1_position_size", "asset_2_position_size"]] = 0
+
+        result_df['asset_1_pnl'] = (result_df['asset_1_position'].shift() * result_df['asset_1_position_size'].shift() * result_df['asset_1'])
+        result_df['asset_2_pnl'] = (result_df['asset_2_position'].shift() * result_df['asset_2_position_size'].shift() * result_df['asset_2'])
+
+        result_df['pnl'] = result_df['asset_1_pnl'] + result_df['asset_2_pnl']
+
+        result_df['fee'] = np.where((result_df['active_trade'].shift() == 1) & (result_df['asset_1_position'] == 0), self.risk_per_asset * self.fee, 0)
+
+        result_df['net_pnl'] = result_df['pnl'] - result_df['fee']
+
+        result_df['net_pnl_pct'] = result_df['net_pnl'] / self.nav
+
+        result_df['cum_pnl'] = result_df['net_pnl'].cumsum()
+
+        result_df.dropna(inplace=True)
+
         result_df.to_csv("backtest_result.csv")
 
-        self.__calculate_metrics(result_df['pnl'])
-        self.plot_spread_analysis(result_df['asset_1'], result_df['asset_2'], result_df['asset_1'] - self.hedge_ratio * result_df['asset_2'], result_df['zscore'], self.hedge_ratio, result_df['cumulative_pnl'])
-
+        self.__calculate_metrics(result_df['net_pnl_pct'])
+        self.plot_spread_analysis(result_df['asset_1'], result_df['asset_2'], result_df['asset_1'] - self.hedge_ratio * result_df['asset_2'], result_df['zscore'], self.hedge_ratio, result_df['cum_pnl'])
+# 
 
 
 
