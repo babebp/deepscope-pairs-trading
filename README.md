@@ -7,4 +7,3 @@ This project implements a pairs trading strategy integrated with machine learnin
 - Data Collection: Fetches historical financial data using APIs (e.g., Yahoo Finance).
 - Signal Generation: Generates trading signals based on the price relationships between the identified pairs.
 - Backtesting: Includes a backtesting module to evaluate the strategy's performance over historical data.
-- Real-time Predictions: Uses KNN to make real-time predictions for entry and exit points.
